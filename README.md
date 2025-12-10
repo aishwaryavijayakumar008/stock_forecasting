@@ -1,14 +1,6 @@
-# Stock Forecasting Pipeline
+# Stock Forecasting using Informer model
 
 This repository provides a complete workflow for preparing data used in short-term stock forecasting models that combine market prices with financial news sentiment.
-
-## Dataset Source
-
-The primary news dataset used for training is available on Hugging Face:
-
-https://huggingface.co/datasets/Zihan1004/FNSPID/tree/main
-
-This dataset contains large-scale financial news headlines mapped to timestamps.
 
 ## Data Preparation Workflow
 
@@ -57,5 +49,6 @@ This script merges price data with sorted news to produce the final training dat
 1. Run `sort_filtered_csv.py` to extract and sort relevant news.
 2. Run `generate_final_dataset.py` to compute sentiment, combine prices and news, and produce the final training dataset.
 3. Use the generated dataset for training forecasting models such as Informer or hybrid sentiment–technical models.
-
+4. Python train.py to run training
+5. python evaluate.py to run evaluation
 ---

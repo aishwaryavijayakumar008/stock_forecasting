@@ -1,16 +1,12 @@
 import pandas as pd
 import os
 
-# -------------------------------------------------------------
-# 1. Load full news dataset
-# -------------------------------------------------------------
+
 news_path = "All_external.csv"
 df_news = pd.read_csv(news_path)
 df_news["Article_title"] = df_news["Article_title"].astype(str)
 
-# -------------------------------------------------------------
-# 2. Define Magnificent 7 keywords for filtering
-# -------------------------------------------------------------
+
 magnificent_7 = {
     "AAPL": ["Apple", "AAPL"],
     "MSFT": ["Microsoft", "MSFT"],
@@ -29,9 +25,7 @@ sorted_folder = "sorted_filtered"
 os.makedirs(filtered_folder, exist_ok=True)
 os.makedirs(sorted_folder, exist_ok=True)
 
-# -------------------------------------------------------------
-# 3. Filter and save CSVs to "filtered" folder
-# -------------------------------------------------------------
+
 for ticker, keywords in magnificent_7.items():
     pattern = "|".join(keywords)
     df_filtered = df_news[df_news["Article_title"].str.contains(pattern, case=False, na=False)]
@@ -39,9 +33,7 @@ for ticker, keywords in magnificent_7.items():
     df_filtered.to_csv(output_path, index=False)
     print(f"Saved filtered file: {output_path}")
 
-# -------------------------------------------------------------
-# 4. Sort each filtered file by Date and save to sorted_filtered
-# -------------------------------------------------------------
+
 csv_files = [f for f in os.listdir(filtered_folder) if f.endswith(".csv")]
 
 print("Sorting filtered files...")

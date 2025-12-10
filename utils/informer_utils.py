@@ -3,9 +3,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-# ============================================================
-# PREPROCESSING HELPERS (Shared)
-# ============================================================
 
 def compute_rsi(series, period=14):
     delta = series.diff()
@@ -53,9 +50,6 @@ def scale_columns(df, cols):
     return df
 
 
-# ============================================================
-# MASTER PREPROCESS FUNCTION (TRAIN + EVAL)
-# ============================================================
 
 def preprocess(df):
     df = df.copy()
@@ -95,9 +89,7 @@ def preprocess(df):
     return df
 
 
-# ============================================================
-# FEATURE LIST
-# ============================================================
+
 
 feature_cols = [
     "open","high","low","close_smooth",
@@ -110,21 +102,13 @@ feature_cols = [
 ]
 
 
-# ============================================================
-# BUILD TRAIN OR TEST SEQUENCES
-# ============================================================
-
 def build_sequences(df, seq_len, horizon, bins=None):
-    """
-    If bins is None → training mode → compute bins from pct returns
-    If bins is provided → evaluation mode → reuse same bins
-    """
     X_list, ytrend_list, ybins_list, pct_list, dates_list = [], [], [], [], []
     close_arr = df["close"].values
 
     pct_all = []
 
-    # First pass to compute all pct returns
+
     for i in range(len(df) - seq_len - horizon):
         now = close_arr[i + seq_len]
         future = close_arr[i + seq_len + horizon]
@@ -133,11 +117,10 @@ def build_sequences(df, seq_len, horizon, bins=None):
 
     pct_all = np.array(pct_all, dtype=np.float32)
 
-    # Training mode: compute bins
+
     if bins is None:
         bins = np.quantile(pct_all, [0,0.2,0.4,0.6,0.8,1.0])
 
-    # Build sequences
     idx = 0
     for i in range(len(df) - seq_len - horizon):
 
@@ -164,67 +147,107 @@ def build_sequences(df, seq_len, horizon, bins=None):
         bins
     )
 
-
-# ============================================================
-# INFORMER MODEL
-# ============================================================
-
 class ProbSparseAttention(nn.Module):
     def forward(self, Q, K, V):
-        scores = torch.matmul(Q, K.transpose(-1,-2)) / np.sqrt(Q.size(-1))
-        top_k = max(1, int(scores.size(-1)*0.02))
+        scores = torch.matmul(Q, K.transpose(-1, -2)) / np.sqrt(Q.size(-1))
+
+        # Keep only top 2% scores
+        top_k = max(1, int(scores.size(-1) * 0.02))
         vals, idx = torch.topk(scores, top_k, dim=-1)
-        sparse = torch.full_like(scores, -1e9)
-        sparse.scatter_(-1, idx, vals)
-        attn = torch.softmax(sparse, dim=-1)
+
+        sparse_scores = torch.full_like(scores, -1e9)
+        sparse_scores.scatter_(-1, idx, vals)
+
+        attn = torch.softmax(sparse_scores, dim=-1)
         return torch.matmul(attn, V)
+
 
 class InformerEncoderLayer(nn.Module):
     def __init__(self, d_model=128):
         super().__init__()
+
         self.attn = ProbSparseAttention()
-        self.ff = nn.Sequential(nn.Linear(d_model,256), nn.ReLU(), nn.Linear(256,d_model))
+        self.dropout = nn.Dropout(0.15)                
         self.norm1 = nn.LayerNorm(d_model)
+
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, 256),
+            nn.ReLU(),
+            nn.Linear(256, d_model)
+        )
         self.norm2 = nn.LayerNorm(d_model)
 
     def forward(self, x):
-        x = self.norm1(x + self.attn(x,x,x))
-        x = self.norm2(x + self.ff(x))
+        att = self.attn(x, x, x)
+        x = self.norm1(x + self.dropout(att))
+
+        # Feed-forward block with dropout
+        ff = self.ff(x)
+        x = self.norm2(x + self.dropout(ff))
+
         return x
+
 
 class InformerEncoder(nn.Module):
     def __init__(self, d_model=128, layers=3):
         super().__init__()
-        self.layers = nn.ModuleList([InformerEncoderLayer(d_model) for _ in range(layers)])
+        self.layers = nn.ModuleList(
+            [InformerEncoderLayer(d_model) for _ in range(layers)]
+        )
+
     def forward(self, x):
-        for l in self.layers:
-            x = l(x)
+        for layer in self.layers:
+            x = layer(x)
         return x
+
 
 class InformerTrendReturn(nn.Module):
     def __init__(self, input_dim=len(feature_cols), d_model=128, num_bins=5):
         super().__init__()
+
         self.embed = nn.Linear(input_dim, d_model)
-        self.pos = nn.Parameter(torch.randn(1,5000,d_model))
-        self.encoder = InformerEncoder(d_model, layers=3)
+
+        # NEW: Add LayerNorm on embeddings
+        self.norm_in = nn.LayerNorm(d_model)
+
+        # Positional encoding
+        self.pos = nn.Parameter(torch.randn(1, 5000, d_model))
+
+        # Encoder with dropout
+        self.encoder = InformerEncoder(d_model=d_model, layers=3)
+
+        # NEW: Dropout before heads
+        self.dropout = nn.Dropout(0.15)
+
+        # Output heads (unchanged)
         self.trend_head = nn.Linear(d_model, 1)
         self.return_bins = nn.Linear(d_model, num_bins)
 
     def forward(self, x):
-        x = self.embed(x) + self.pos[:, :x.size(1), :]
-        x = self.encoder(x)
-        last = x[:, -1, :]
-        return torch.sigmoid(self.trend_head(last)), self.return_bins(last)
 
+        # NEW: Noise injection (small, improves generalization)
+        x = x + torch.randn_like(x) * 0.01
+
+        # Embed + positional encoding + normalization
+        x = self.embed(x) + self.pos[:, :x.size(1), :]
+        x = self.norm_in(x)
+
+        # Transformer encoder
+        x = self.encoder(x)
+
+        # Extract last token
+        last = x[:, -1, :]
+
+        # NEW: Dropout before classification heads
+        last = self.dropout(last)
+
+        # Outputs
+        trend = torch.sigmoid(self.trend_head(last))
+        bins = self.return_bins(last)
+
+        return trend, bins
 
 def time_split_df(df, split_ratio=0.8):
-    """
-    Splits a DF into train and test by time order.
-
-    split_ratio = fraction of rows used for training.
-    Example:
-        0.8 = 80% train, 20% test
-    """
     n = len(df)
     split = int(n * split_ratio)
     df_train = df.iloc[:split].reset_index(drop=True)
