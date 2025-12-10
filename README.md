@@ -57,5 +57,6 @@ This script merges price data with sorted news to produce the final training dat
 1. Run `sort_filtered_csv.py` to extract and sort relevant news.
 2. Run `generate_final_dataset.py` to compute sentiment, combine prices and news, and produce the final training dataset.
 3. Use the generated dataset for training forecasting models such as Informer or hybrid sentiment–technical models.
-
+4. Python train.py to run training
+5. python evaluate.py to run evaluation
 ---
